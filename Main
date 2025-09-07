@@ -3,29 +3,23 @@ from fastapi.responses import HTMLResponse
 import csv, difflib, re
 from typing import Optional
 
-app = FastAPI(title="Smart Vehicle Data Validation")
+app = FastAPI(title = "Smart Vehicle Data Validation")
 
+#load database
 db = []
-with open("vehicle_master.csv", newline="", encoding="utf-8") as f:
+with open("vehicle_master.csv", newline = "", encoding = "utf-8") as f:
     reader = csv.DictReader(f)
     for row in reader:
         db.append(
             {
-                "brand": row["brand"],
-                "model": row["model"],
-                "year_start": int(row["year_start"]),
-                "year_end": int(row["year_end"]),
-                "plate": row.get("plate", "").strip() 
+                "brand" : row["brand"],
+                "model" : row["model"],
+                "year_start" : int(row["year_start"]),
+                "year_end" : int(row["year_end"])
             }
         )
 
-def normalize_plate(plate: str) -> str:
-    if not plate:
-        return plate
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", plate)
-    return cleaned.upper()
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class = HTMLResponse)
 def home():
     return """
     <!DOCTYPE html>
@@ -103,7 +97,7 @@ def home():
                     } catch (err) {
                         console.error("Validation error:", err);
                     }
-                }, 100); // wait 100ms after user stops typing
+                }, 100); // wait 300ms after user stops typing
             }
         </script>
     </body>
@@ -113,76 +107,77 @@ def home():
 
 @app.get("/validate")
 def validate(
-    brand: Optional[str] = None,
-    model: Optional[str] = None,
-    year: Optional[int] = None,
-    plate: Optional[str] = None
+    brand : Optional[str] = None,
+    model : Optional[str] = None,
+    year : Optional[int] = None,
+    plate : Optional[str] = None
 ):
     suggestions = {}
 
-    # validate brand
+    #validate brand
     if brand:
-        brands = list({r["brand"] for r in db})
-        closest_brand = difflib.get_close_matches(brand.lower(), [b.lower() for b in brands], n=1, cutoff=0.7)
-        if closest_brand:
-            real_brand = next(b for b in brands if b.lower() == closest_brand[0])
-            if real_brand.lower() == brand.lower() and real_brand != brand:
-                brand = real_brand
-            elif real_brand.lower() != brand.lower():
-                suggestions["brand"] = f"Did you mean '{real_brand}'?"
-        else:
-            suggestions["brand"] = "Unknown brand"
+      brands = list({r["brand"] for r in db})
+      closest_brand = difflib.get_close_matches(brand.lower(), [b.lower() for b in brands], n=1, cutoff=0.7)
+      if closest_brand:
+        real_brand = next(b for b in brands if b.lower() == closest_brand[0])
+        # If case mismatch only → auto-correct silently
+        if real_brand.lower() == brand.lower() and real_brand != brand:
+            brand = real_brand
+        # If actual typo → suggest correction
+        elif real_brand.lower() != brand.lower():
+            suggestions["brand"] = f"Did you mean '{real_brand}'?"
+      else:
+        suggestions["brand"] = "Unknown brand"
 
-    # validate model
+    #validate model
     if model:
-        models_for_brand = [r["model"] for r in db if r["brand"].lower() == brand.lower()]
-        if models_for_brand:
-            closest_model = difflib.get_close_matches(model.lower(), [m.lower() for m in models_for_brand], n=1, cutoff=0.7)
-            if closest_model:
-                real_model = next(m for m in models_for_brand if m.lower() == closest_model[0])
-                if real_model.lower() == model.lower() and real_model != model:
-                    model = real_model
-                elif real_model.lower() != model.lower():
-                    suggestions["model"] = f"Did you mean '{real_model}'?"
+      models_for_brand = [r["model"] for r in db if r["brand"].lower() == brand.lower()]
+
+      if models_for_brand:
+        closest_model = difflib.get_close_matches(model.lower(), [m.lower() for m in models_for_brand], n=1, cutoff=0.7)
+        if closest_model:
+            real_model = next(m for m in models_for_brand if m.lower() == closest_model[0])
+            if real_model.lower() == model.lower() and real_model != model:
+                model = real_model  # fix case only
+            elif real_model.lower() != model.lower():
+                suggestions["model"] = f"Did you mean '{real_model}'?"
+        else:
+            # Model not found in this brand → check other brands
+            all_models = [(r["brand"], r["model"]) for r in db]
+            matches = [(b, m) for b, m in all_models if m.lower() == model.lower()]
+            if matches:
+                # Example: Civic exists under Honda
+                suggestions["model"] = f"'{model}' exists under {', '.join([f'{b} {m}' for b,m in matches])}"
             else:
-                all_models = [(r["brand"], r["model"]) for r in db]
-                matches = [(b, m) for b, m in all_models if m.lower() == model.lower()]
-                if matches:
-                    suggestions["model"] = f"'{model}' exists under {', '.join([f'{b} {m}' for b,m in matches])}"
-                else:
-                    suggestions["model"] = f"Unknown model for brand '{brand}'"
-        else:
-            suggestions["model"] = "Cannot validate model until brand is valid"
+                suggestions["model"] = f"Unknown model for brand '{brand}'"
+      else:
+        suggestions["model"] = "Cannot validate model until brand is valid"
 
-    # validate year
+    #validate year
     if year:
-        brand_valid = any(r["brand"].lower() == brand.lower() for r in db)
-        model_valid = any(r["model"].lower() == model.lower() and r["brand"].lower() == brand.lower() for r in db)
+      brand_valid = any(r["brand"].lower() == brand.lower() for r in db)
+      model_valid = any(r["model"].lower() == model.lower() and r["brand"].lower() == brand.lower() for r in db)
 
-        if brand_valid and model_valid:
-            valid_range = None
-            for r in db:
-                if r["brand"].lower() == brand.lower() and r["model"].lower() == model.lower():
-                    valid_range = (r["year_start"], r["year_end"])
-                    break
+      if brand_valid and model_valid:
+        # Find year range for this brand+model
+        valid_range = None
+        for r in db:
+            if r["brand"].lower() == brand.lower() and r["model"].lower() == model.lower():
+                valid_range = (r["year_start"], r["year_end"])
+                break
 
-            if valid_range and not (valid_range[0] <= year <= valid_range[1]):
-                suggestions["year"] = f"Invalid year. Allowed: {valid_range[0]}–{valid_range[1]}"
-        else:
-            suggestions["year"] = "Year cannot be validated because brand/model is invalid"
+        if valid_range and not (valid_range[0] <= year <= valid_range[1]):
+            suggestions["year"] = f"Invalid year. Allowed: {valid_range[0]}–{valid_range[1]}"
+      else:
+        suggestions["year"] = "Year cannot be validated because brand/model is invalid"
 
-    # validate plate
+    #validate plate
     if plate:
-        normalized = normalize_plate(plate)
-        plates = [normalize_plate(r["plate"]) for r in db if r.get("plate")]
+      pattern = r"^[A-Z]{1,3}\s?[0-9]{1,4}$"
+      if not re.match(pattern, plate):
+        suggestions["plate"] = "Plate format invalid. Example: ABC 1234"
 
-        if normalized in plates:
-            if normalized != normalize_plate(plate):
-                plate = normalized  
-        else:
-            suggestions["plate"] = "Unknown plate number"
-
-    return {
-        "input": {"brand": brand, "model": model, "year": year, "plate": plate},
-        "suggestions": suggestions or "All valid input"
+    return{
+        "input": {"brand" : brand, "model" : model, "year" : year, "plate" : plate},
+        "suggestions" : suggestions or "All valid input"
     }
