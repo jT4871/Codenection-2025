@@ -1,69 +1,188 @@
-# Codenection-2025
-import re
-import difflib
-from datetime import datetime
-from typing import Tuple, List
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import csv, difflib, re
+from typing import Optional
 
-Vehicle_Database = [
-    ("Toyota","Vios",2010,2025),
-    ("Toyota","Camry",2005,2025),
-    ("Honda","City",2008,2025),
-    ("Honda","Civic",2000,2025),
-    ("Perodua","Myvi",2005,2025),
-    ("Perodua","Axia",2014,2025),
-    ("Proton","Saga",2000,2025),
-    ("Proton","X70",2019,2025),
-]
+app = FastAPI(title="Smart Vehicle Data Validation")
 
-# Get data from Database
-VALID_BRANDS = sorted(set([brand for brand, _, _, _ in VEHICLE_DB]))
-VALID_MODELS = sorted(set([model for _, model, _, _ in VEHICLE_DB]))
+db = []
+with open("vehicle_master.csv", newline="", encoding="utf-8") as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        db.append(
+            {
+                "brand": row["brand"],
+                "model": row["model"],
+                "year_start": int(row["year_start"]),
+                "year_end": int(row["year_end"]),
+                "plate": row.get("plate", "").strip() 
+            }
+        )
 
-def only_alphabet(s: str) -> bool:
-    return bool(re.match(r'^[a-zA-Z\s]+$', s))
+def normalize_plate(plate: str) -> str:
+    if not plate:
+        return plate
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", plate)
+    return cleaned.upper()
 
-def suggest_correction(user_input: str, valid_list: List[str]) -> str:
-    matches = difflib.get_close_matches(user_input, valid_list, n=1, cutoff=0.6)
-    return matches[0] if matches else user_input
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Smart Vehicle Validator</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            input { margin: 10px 0; padding: 8px; width: 250px; }
+            .suggestion { color: red; font-size: 14px; }
+            .valid { color: green; font-size: 14px; }
+        </style>
+    </head>
+    <body>
+        <h2>Smart Vehicle Data Validator</h2>
 
-def validate_vehicle_data(brand: str, model: str, produce_year: int, renew_year: int) -> Tuple[bool, str]:
-    errors = []
-    current_year = datetime.now().year
-   
-  #correction and check brands
-    corrected_brand = suggest_correction(brand, VALID_BRANDS)
-    if corrected_brand != brand and corrected_brand in VALID_BRANDS:
-        return False, f"Brand '{brand}' fail，do you mean '{corrected_brand}'？"
-    elif corrected_brand not in VALID_BRANDS:
-        errors.append(f"Drand '{brand}' undefind")
-        
-  #correction and check model
-    corrected_model = suggest_correction(model, VALID_MODELS)
-    if corrected_model != model and corrected_model in VALID_MODELS:
-        return False, f"Model '{model}' fail，do you mean '{corrected_model}'？"
-    elif corrected_model not in VALID_MODELS:
-        errors.append(f"Model '{model}' undefind")
+        <label>Brand:</label><br>
+        <input type="text" id="brand" oninput="validateInputs()"><br>
+        <span id="brandMsg"></span><br>
 
-   #year produce     
-   if not isinstance(produce_year, int):
-        errors.append(f"year '{produce_year}' must be interger")
-    elif produce_year < 1886:
-        errors.append(f"produce year '{produce_year}' can't early than 1866")
-    elif produce_year > current_year + 1:
-        errors.append(f"produce year '{produce_year}' can't late than{current_year + 1}")
+        <label>Model:</label><br>
+        <input type="text" id="model" oninput="validateInputs()"><br>
+        <span id="modelMsg"></span><br>
 
-  #renew lisence year
-    if not isinstance(renew_year, int):
-        errors.append(f"Renew year '{renew_year}' must be interger")
-    elif renew_year < produce_year:
-        errors.append(f"Renew year '{renew_year}' can't early than '{produce_year}'")
-    elif renew_year > current_year + 1:
-        errors.append(f"Renew year '{renew_year}' can't late than{current_year}")
-    
-  #check data
-    if (brand, model, produce_year, renew_year) not in VEHICLE_DB:
-        errors.append(f"Data ({brand}, {model}, {produce_year}, {renew_year}) undefind")
-    if errors:
-        return False, "；".join(errors)
-    return True, "Success"
+        <label>Year:</label><br>
+        <input type="number" id="year" oninput="validateInputs()"><br>
+        <span id="yearMsg"></span><br>
 
+        <label>Plate:</label><br>
+        <input type="text" id="plate" placeholder="ABC 1234" oninput="validateInputs()"><br>
+        <span id="plateMsg"></span><br>
+
+        <script>
+            let timer;
+            async function validateInputs() {
+                clearTimeout(timer);
+                timer = setTimeout(async () => {
+                    const brand = document.getElementById("brand").value;
+                    const model = document.getElementById("model").value;
+                    const year = document.getElementById("year").value;
+                    const plate = document.getElementById("plate").value;
+
+                    try {
+                        const res = await fetch(`/validate?brand=${encodeURIComponent(brand)}&model=${encodeURIComponent(model)}&year=${encodeURIComponent(year)}&plate=${encodeURIComponent(plate)}`);
+                        const data = await res.json();
+
+                        // Reset messages
+                        document.getElementById("brandMsg").innerText = "";
+                        document.getElementById("modelMsg").innerText = "";
+                        document.getElementById("yearMsg").innerText = "";
+                        document.getElementById("plateMsg").innerText = "";
+
+                        if (typeof data.suggestions === "string") {
+                            // all good
+                            document.getElementById("brandMsg").innerText = data.suggestions;
+                            document.getElementById("brandMsg").className = "valid";
+                        } else {
+                            if (data.suggestions.brand) {
+                                document.getElementById("brandMsg").innerText = data.suggestions.brand;
+                                document.getElementById("brandMsg").className = "suggestion";
+                            }
+                            if (data.suggestions.model) {
+                                document.getElementById("modelMsg").innerText = data.suggestions.model;
+                                document.getElementById("modelMsg").className = "suggestion";
+                            }
+                            if (data.suggestions.year) {
+                                document.getElementById("yearMsg").innerText = data.suggestions.year;
+                                document.getElementById("yearMsg").className = "suggestion";
+                            }
+                            if (data.suggestions.plate) {
+                                document.getElementById("plateMsg").innerText = data.suggestions.plate;
+                                document.getElementById("plateMsg").className = "suggestion";
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Validation error:", err);
+                    }
+                }, 100); // wait 100ms after user stops typing
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+
+@app.get("/validate")
+def validate(
+    brand: Optional[str] = None,
+    model: Optional[str] = None,
+    year: Optional[int] = None,
+    plate: Optional[str] = None
+):
+    suggestions = {}
+
+    # validate brand
+    if brand:
+        brands = list({r["brand"] for r in db})
+        closest_brand = difflib.get_close_matches(brand.lower(), [b.lower() for b in brands], n=1, cutoff=0.7)
+        if closest_brand:
+            real_brand = next(b for b in brands if b.lower() == closest_brand[0])
+            if real_brand.lower() == brand.lower() and real_brand != brand:
+                brand = real_brand
+            elif real_brand.lower() != brand.lower():
+                suggestions["brand"] = f"Did you mean '{real_brand}'?"
+        else:
+            suggestions["brand"] = "Unknown brand"
+
+    # validate model
+    if model:
+        models_for_brand = [r["model"] for r in db if r["brand"].lower() == brand.lower()]
+        if models_for_brand:
+            closest_model = difflib.get_close_matches(model.lower(), [m.lower() for m in models_for_brand], n=1, cutoff=0.7)
+            if closest_model:
+                real_model = next(m for m in models_for_brand if m.lower() == closest_model[0])
+                if real_model.lower() == model.lower() and real_model != model:
+                    model = real_model
+                elif real_model.lower() != model.lower():
+                    suggestions["model"] = f"Did you mean '{real_model}'?"
+            else:
+                all_models = [(r["brand"], r["model"]) for r in db]
+                matches = [(b, m) for b, m in all_models if m.lower() == model.lower()]
+                if matches:
+                    suggestions["model"] = f"'{model}' exists under {', '.join([f'{b} {m}' for b,m in matches])}"
+                else:
+                    suggestions["model"] = f"Unknown model for brand '{brand}'"
+        else:
+            suggestions["model"] = "Cannot validate model until brand is valid"
+
+    # validate year
+    if year:
+        brand_valid = any(r["brand"].lower() == brand.lower() for r in db)
+        model_valid = any(r["model"].lower() == model.lower() and r["brand"].lower() == brand.lower() for r in db)
+
+        if brand_valid and model_valid:
+            valid_range = None
+            for r in db:
+                if r["brand"].lower() == brand.lower() and r["model"].lower() == model.lower():
+                    valid_range = (r["year_start"], r["year_end"])
+                    break
+
+            if valid_range and not (valid_range[0] <= year <= valid_range[1]):
+                suggestions["year"] = f"Invalid year. Allowed: {valid_range[0]}–{valid_range[1]}"
+        else:
+            suggestions["year"] = "Year cannot be validated because brand/model is invalid"
+
+    # validate plate
+    if plate:
+        normalized = normalize_plate(plate)
+        plates = [normalize_plate(r["plate"]) for r in db if r.get("plate")]
+
+        if normalized in plates:
+            if normalized != normalize_plate(plate):
+                plate = normalized  
+        else:
+            suggestions["plate"] = "Unknown plate number"
+
+    return {
+        "input": {"brand": brand, "model": model, "year": year, "plate": plate},
+        "suggestions": suggestions or "All valid input"
+    }
